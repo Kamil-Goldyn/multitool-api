@@ -30,4 +30,10 @@ public class TaskController {
         List<Task> tasks = taskService.findAllTasks();
         return ResponseEntity.ok(tasks);
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteTask(@PathVariable Long id) {
+        taskService.deleteTaskById(id);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
 }

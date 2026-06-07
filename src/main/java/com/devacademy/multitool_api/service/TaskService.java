@@ -5,6 +5,7 @@ import com.devacademy.multitool_api.model.Task;
 import com.devacademy.multitool_api.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -28,5 +29,9 @@ public class TaskService {
 
     public List<Task> findAllTasks() {
         return taskRepository.findAll();
+    }
+
+    public void deleteTaskById(Long id) {
+        taskRepository.deleteById(id);
     }
 }
