@@ -1,155 +1,285 @@
-import { useState, useEffect } from 'react'
+// =============================================================================
+//  App.jsx  —  GŁÓWNY komponent, który "dyryguje" całą aplikacją
+// =============================================================================
+//
+//  To jest serce frontendu. Tu mieszka cały STAN aplikacji (lista zadań,
+//  filtry, edytowane zadanie, powiadomienia) oraz LOGIKA (pobieranie,
+//  tworzenie, edycja, usuwanie). Mniejsze komponenty (Header, TaskForm,
+//  TaskList…) tylko WYŚWIETLAJĄ dane i ZGŁASZAJĄ zdarzenia w górę, do App.
+//
+//  Ten wzorzec nazywa się "lifting state up" (wyniesienie stanu w górę):
+//  stan trzymamy w jednym, wspólnym miejscu — rodzicu — a dzieci dostają
+//  dane przez props i informują rodzica o akcjach przez funkcje (callbacki).
+//
+//  PRZEPŁYW DANYCH (jednokierunkowy — to fundament Reacta):
+//    App (stan) ──props──► komponenty potomne ──callback──► App (zmienia stan)
+//                                          └──► React odrysowuje widok
+// =============================================================================
+
+import { useState, useEffect, useMemo, useCallback } from 'react'
+
+// Warstwa API — funkcje rozmawiające z backendem.
+import * as tasksApi from './api/tasksApi'
+
+// Stałe (statusy) i komponenty UI.
+import { STATUS } from './constants/taskStatus'
+import Header from './components/Header'
+import FilterBar from './components/FilterBar'
+import TaskForm from './components/TaskForm'
+import TaskList from './components/TaskList'
+import Modal from './components/Modal'
+import Toast from './components/Toast'
 
 function App() {
-  // Stan do przechowywania danych z formularza
-  const [task, setTask] = useState({
-    title: '',
-    description: '',
-    status: 'TODO'
-  })
+  // ---------------------------------------------------------------------------
+  //  STAN APLIKACJI
+  //  Każde wywołanie `useState` tworzy jeden "kawałek" stanu i funkcję do jego
+  //  zmiany. Gdy stan się zmienia, React automatycznie odrysowuje to, co od
+  //  niego zależy — nie musimy ręcznie dotykać DOM-u.
+  // ---------------------------------------------------------------------------
+  const [tasks, setTasks] = useState([])        // pełna lista zadań z serwera
+  const [loading, setLoading] = useState(true)  // czy trwa pierwsze pobieranie
+  const [error, setError] = useState(null)      // komunikat błędu pobierania
 
-  // Stan do przechowywania listy zadań pobranych z backendu
-  const [taskList, setTaskList] = useState([])
-  const [message, setMessage] = useState('')
+  const [query, setQuery] = useState('')        // tekst z wyszukiwarki
+  const [filter, setFilter] = useState('ALL')   // aktywny filtr statusu
 
-  // Funkcja pobierająca zadania z backendu (GET /api/tasks)
-  const fetchTasks = async () => {
-    try {
-      const response = await fetch('/api/tasks');
-      if (response.ok) {
-        const data = await response.json();
-        setTaskList(data); // Zapisujemy pobraną tablicę do stanu
-      }
-    } catch (error) {
-      console.error("Blad pobierania zadan:", error);
-    }
-  }
+  const [editingTask, setEditingTask] = useState(null) // zadanie w edycji (lub null)
+  const [toast, setToast] = useState(null)             // powiadomienie { message, type }
 
-  // useEffect uruchamia funkcję fetchTasks dokładnie jeden raz, zaraz po wczytaniu strony
-  useEffect(() => {
-    fetchTasks();
+  // ---------------------------------------------------------------------------
+  //  POMOCNIK: pokaż powiadomienie (toast).
+  //  `useCallback` "zapamiętuje" funkcję między renderami, żeby nie tworzyć jej
+  //  od nowa za każdym razem — to drobna optymalizacja, przydatna gdy funkcję
+  //  przekazujemy do useEffect/dzieci.
+  // ---------------------------------------------------------------------------
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type })
   }, [])
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setTask(prevState => ({
-      ...prevState,
-      [name]: value
-    }))
-  }
+  // Toast sam znika po 3 sekundach. useEffect uruchamia się, gdy zmieni się
+  // `toast`; ustawiamy timer, a w "sprzątaniu" go czyścimy (gdyby pojawił się
+  // kolejny toast wcześniej — unikamy nakładających się timerów).
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [toast])
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setMessage('');
-
+  // ---------------------------------------------------------------------------
+  //  POBIERANIE ZADAŃ z backendu.
+  // ---------------------------------------------------------------------------
+  //  Uwaga: `setState` wołamy dopiero PO `await`. Dzięki temu (1) linter nie
+  //  protestuje o synchroniczny setState w efekcie i (2) odświeżenie listy po
+  //  akcji CRUD nie miga szkieletami — `loading` zostaje `false`, bo ustawiamy
+  //  je na false tylko w `finally`, a na true nigdy ponownie po starcie.
+  const loadTasks = useCallback(async () => {
     try {
-      const response = await fetch('/api/tasks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(task)
-      });
+      const data = await tasksApi.getTasks()
+      setTasks(data ?? [])
+      setError(null)
+    } catch (err) {
+      // Komunikat z warstwy API (np. "Błąd serwera (500)") trafia tutaj.
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-      if (response.ok) {
-        setMessage('Zadanie dodane pomyslnie!');
-        setTask({ title: '', description: '', status: 'TODO' }); // Reset formularza
-        fetchTasks(); // Ponownie pobieramy zadania, aby lista na stronie od razu sie zaktualizowala
-      } else {
-        setMessage('Blad walidacji danych po stronie backendu.');
-      }
-    } catch (error) {
-      setMessage('Blad polaczenia z serwerem.');
+  // Pobierz zadania RAZ, zaraz po pierwszym wyświetleniu aplikacji.
+  // `[loadTasks]` w zależnościach = "wykonaj przy montowaniu" (loadTasks jest
+  // stabilne dzięki useCallback, więc efekt nie zapętli się).
+  //
+  // Linijka `eslint-disable` poniżej świadomie wyłącza jedną regułę: pobranie
+  // danych z serwera tuż po starcie to PODRĘCZNIKOWE, poprawne użycie useEffect.
+  // Reguła ostrzega przed setState w efektach (bo zwykle da się bez nich),
+  // ale akurat tutaj jest to uzasadnione — a dobry programista wie, kiedy
+  // reguła nie pasuje do przypadku.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadTasks()
+  }, [loadTasks])
+
+  // ---------------------------------------------------------------------------
+  //  AKCJE CRUD (Create / Read / Update / Delete)
+  //  Po każdej zmianie po prostu ponownie pobieramy listę (`loadTasks`).
+  //  To najprostsza, niezawodna strategia synchronizacji z serwerem.
+  //  (Alternatywą jest "optimistic update" — od razu zmieniamy listę lokalnie;
+  //   szybsze wizualnie, ale trudniejsze, bo trzeba cofać zmiany przy błędzie.)
+  // ---------------------------------------------------------------------------
+
+  // CREATE — tworzenie nowego zadania (wołane z formularza po lewej).
+  const handleCreate = async (values) => {
+    try {
+      await tasksApi.createTask(values)
+      await loadTasks()
+      showToast('Zadanie zostało dodane ✨')
+    } catch (err) {
+      showToast(err.message, 'error')
+      throw err // rzucamy dalej, by TaskForm wiedział, że się nie udało
     }
   }
 
+  // UPDATE — zapis zmian z modalu edycji.
+  const handleUpdate = async (values) => {
+    try {
+      await tasksApi.updateTask(editingTask.id, values)
+      await loadTasks()
+      setEditingTask(null) // zamykamy modal
+      showToast('Zmiany zostały zapisane ✅')
+    } catch (err) {
+      showToast(err.message, 'error')
+      throw err
+    }
+  }
+
+  // DELETE — usuwanie z potwierdzeniem.
+  // `window.confirm` to najprostsze, wbudowane okno potwierdzenia. Wystarcza
+  // na start; w przyszłości można je podmienić na ładny modal (masz już Modal!).
+  const handleDelete = async (task) => {
+    const ok = window.confirm(`Usunąć zadanie „${task.title}”?`)
+    if (!ok) return
+    try {
+      await tasksApi.deleteTask(task.id)
+      await loadTasks()
+      showToast('Zadanie zostało usunięte 🗑️')
+    } catch (err) {
+      showToast(err.message, 'error')
+    }
+  }
+
+  // CHANGE STATUS — szybkie przełączenie statusu z karty.
+  // Backend (PUT) wymaga kompletnego obiektu, więc wysyłamy całe zadanie
+  // z podmienionym tylko statusem.
+  const handleChangeStatus = async (task, nextStatus) => {
+    try {
+      await tasksApi.updateTask(task.id, {
+        title: task.title,
+        description: task.description,
+        status: nextStatus,
+      })
+      await loadTasks()
+    } catch (err) {
+      showToast(err.message, 'error')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  DANE WYLICZANE (derived state) — liczone z `tasks`, NIE trzymane osobno.
+  //  Zasada: nie duplikuj stanu. Statystyki i przefiltrowaną listę wyliczamy
+  //  na bieżąco. `useMemo` zapamiętuje wynik i przelicza go tylko, gdy zmienią
+  //  się jego zależności — żeby nie liczyć tego samego przy każdym renderze.
+  // ---------------------------------------------------------------------------
+
+  // Statystyki do kafelków w nagłówku.
+  const stats = useMemo(() => {
+    return {
+      total: tasks.length,
+      [STATUS.TODO]: tasks.filter((t) => t.status === STATUS.TODO).length,
+      [STATUS.IN_PROGRESS]: tasks.filter((t) => t.status === STATUS.IN_PROGRESS).length,
+      [STATUS.DONE]: tasks.filter((t) => t.status === STATUS.DONE).length,
+    }
+  }, [tasks])
+
+  // Lista po zastosowaniu filtra statusu i wyszukiwarki.
+  const filteredTasks = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return tasks
+      .filter((task) => filter === 'ALL' || task.status === filter)
+      .filter((task) => {
+        if (!q) return true // pusta wyszukiwarka = pokaż wszystko
+        // Szukamy frazy w tytule LUB w opisie (bez rozróżniania wielkości liter).
+        return (
+          task.title.toLowerCase().includes(q) ||
+          task.description.toLowerCase().includes(q)
+        )
+      })
+  }, [tasks, filter, query])
+
+  // Czy aktywne jest jakieś zawężanie? Potrzebne, by pokazać właściwy
+  // komunikat w pustym stanie listy.
+  const isFiltered = filter !== 'ALL' || query.trim() !== ''
+
+  // ---------------------------------------------------------------------------
+  //  WIDOK (JSX). To, co zwraca komponent, React zamienia na elementy na ekranie.
+  // ---------------------------------------------------------------------------
   return (
-    // Kontener główny ze stylami Tailwind: maksymalna szerokość, wyśrodkowanie, odstępy
-    <div className="max-w-6xl mx-auto my-10 p-5 font-sans">
-      
-      {/* Układ dwukolumnowy na większych ekranach (md:grid-cols-2), odstęp między kolumnami (gap-10) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-        
-        {/* KOLUMNA 1: Formularz */}
-        <div className="bg-purple-50 p-6 rounded-xl shadow-md border border-gray-100 h-fit">
-          <h2 className="text-2xl font-bold mb-5 text-blue-800">Dodaj nowe zadanie</h2>
-          
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tytuł (min. 3 znaki):</label>
-              <input 
-                type="text" 
-                name="title" 
-                value={task.title} 
-                onChange={handleChange} 
-                required 
-                className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:py-14">
+      <Header stats={stats} />
+
+      {/* Główny układ: na desktopie dwie kolumny (formularz | lista).
+          `lg:grid-cols-[380px_1fr]` = stała szerokość formularza + reszta na listę. */}
+      <main className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-[380px_1fr]">
+        {/* LEWA KOLUMNA: formularz tworzenia.
+            `lg:sticky lg:top-8` sprawia, że formularz "przykleja się" i jest
+            widoczny podczas przewijania długiej listy zadań. */}
+        <section className="lg:sticky lg:top-8 lg:self-start">
+          <div className="glass rounded-3xl border border-white/60 p-6 shadow-xl shadow-brand-900/10 animate-rise">
+            <div className="mb-5 flex items-center gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-br from-brand-600 to-brand-400 text-lg text-white shadow-lg shadow-brand-500/30">
+                ＋
+              </span>
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Nowe zadanie</h2>
+                <p className="text-xs text-slate-400">Wypełnij i zapisz</p>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Opis:</label>
-              <textarea 
-                name="description" 
-                value={task.description} 
-                onChange={handleChange} 
-                required
-                className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px]"
-              />
-            </div>
+            {/* TaskForm sam zarządza polami; my dostajemy gotowe dane w onSubmit. */}
+            <TaskForm onSubmit={handleCreate} submitLabel="Dodaj zadanie" />
+          </div>
+        </section>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Status:</label>
-              <select 
-                name="status" 
-                value={task.status} 
-                onChange={handleChange}
-                className="w-full p-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="TODO">DO ZROBIENIA</option>
-                <option value="IN_PROGRESS">W TRAKCIE</option>
-                <option value="DONE">ZAKOŃCZONE</option>
-              </select>
-            </div>
+        {/* PRAWA KOLUMNA: filtry + lista. */}
+        <section className="flex flex-col gap-5">
+          <FilterBar
+            query={query}
+            onQueryChange={setQuery}
+            filter={filter}
+            onFilterChange={setFilter}
+          />
 
-            <button type="submit" className="w-full mt-2 p-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
-              Zapisz zadanie
-            </button>
-          </form>
+          <TaskList
+            tasks={filteredTasks}
+            loading={loading}
+            error={error}
+            isFiltered={isFiltered}
+            onEdit={setEditingTask}        // kliknięcie "Edytuj" otwiera modal
+            onDelete={handleDelete}
+            onChangeStatus={handleChangeStatus}
+          />
+        </section>
+      </main>
 
-          {message && <p className="mt-4 text-sm font-medium text-blue-600 bg-blue-50 p-3 rounded-lg text-center">{message}</p>}
-        </div>
+      {/* MODAL EDYCJI. Renderujemy go zawsze, ale jego `open` zależy od tego,
+          czy jest jakieś `editingTask`. W środku — ten sam TaskForm, tylko
+          z danymi startowymi edytowanego zadania. */}
+      <Modal
+        open={editingTask !== null}
+        title="Edytuj zadanie"
+        onClose={() => setEditingTask(null)}
+      >
+        {/* `key={editingTask?.id}` to ważna sztuczka: zmiana `key` każe Reactowi
+            stworzyć formularz OD NOWA, dzięki czemu pola wypełnią się danymi
+            właśnie wybranego zadania. */}
+        {editingTask && (
+          <TaskForm
+            key={editingTask.id}
+            initialValues={editingTask}
+            onSubmit={handleUpdate}
+            submitLabel="Zapisz zmiany"
+            onCancel={() => setEditingTask(null)}
+          />
+        )}
+      </Modal>
 
-        {/* KOLUMNA 2: Lista zadań */}
-        <div>
-          <h2 className="text-2xl font-bold mb-5 text-gray-800">Lista istniejących zadań</h2>
-          
-          {taskList.length === 0 ? (
-            <p className="text-gray-500 italic text-center p-10 border-2 border-dashed border-gray-200 rounded-xl">Brak zadan w bazie danych.</p>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {/* Mapujemy tablicę zadań na elementy HTML */}
-              {taskList.map((item) => (
-                <div key={item.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-lg font-bold text-gray-900">{item.title}</h3>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full 
-                      ${item.status === 'DONE' ? 'bg-green-100 text-green-800' : 
-                        item.status === 'IN_PROGRESS' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>
-                      {item.status}
-                    </span>
-                  </div>
-                  <p className="text-gray-600 text-sm mb-4">{item.description}</p>
-                  <div className="text-xs text-gray-400">
-                    ID: {item.id} | Utworzono: {new Date(item.createdAt).toLocaleString()}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* POWIADOMIENIA. Zawsze obecny, pokazuje się tylko gdy `toast` != null. */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
-      </div>
+      {/* STOPKA. */}
+      <footer className="mt-16 text-center text-xs text-slate-400">
+        Zbudowane z React + Vite + Tailwind CSS · łączy się z Spring Boot API
+      </footer>
     </div>
   )
 }
