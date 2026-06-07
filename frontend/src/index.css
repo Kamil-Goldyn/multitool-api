@@ -1,1 +1,100 @@
-@import "tailwindcss";
+/* ===========================================================================
+   index.css  —  globalny styl + "design system" aplikacji
+   ===========================================================================
+
+   Używamy Tailwind CSS v4. Jedna linijka poniżej importuje całego Tailwinda
+   (wszystkie klasy typu `flex`, `p-4`, `text-xl`, kolory itd.).
+
+   W Tailwind v4 motyw (kolory, czcionki, cienie) konfigurujemy bezpośrednio
+   w CSS, w bloku @theme — i od razu mamy z nich gotowe klasy, np. zmienna
+   --color-brand-500 daje nam klasy `bg-brand-500`, `text-brand-500` itd.
+   =========================================================================== */
+
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   MOTYW: własna paleta "brand" (fiolet/indygo) — to nasz kolor przewodni.
+   Dzięki temu cała aplikacja jest spójna, a zmiana jednego odcienia tutaj
+   przemalowuje przyciski, akcenty i gradienty w całym UI.
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+
+  /* Domyślna czcionka aplikacji (Inter ładujemy w index.html). */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Własne animacje — używamy ich potem przez klasy `animate-...`.
+     Tailwind v4 automatycznie tworzy klasę z nazwy zmiennej --animate-*. */
+  --animate-fade-in: fade-in 0.4s ease-out both;
+  --animate-rise: rise 0.45s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+  --animate-pop: pop 0.25s ease-out both;
+}
+
+/* ---------------------------------------------------------------------------
+   KLATKI ANIMACJI (keyframes), do których odwołują się zmienne powyżej.
+   --------------------------------------------------------------------------- */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pop {
+  0%   { opacity: 0; transform: scale(0.92); }
+  60%  { transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ---------------------------------------------------------------------------
+   STYL GLOBALNY dla <body>.
+   Tworzymy "aurorę" — kilka rozmytych, kolorowych plam tła ułożonych
+   gradientami radialnymi. To one nadają stronie ten efekt "wow".
+   `background-attachment: fixed` sprawia, że tło nie przewija się z treścią.
+   --------------------------------------------------------------------------- */
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #1e1b2e;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased; /* gładsze fonty na ekranach Apple */
+  background-color: #f7f5ff;
+  background-image:
+    radial-gradient(at 12% 8%, rgba(167, 139, 250, 0.28) 0px, transparent 45%),
+    radial-gradient(at 88% 12%, rgba(236, 72, 153, 0.18) 0px, transparent 42%),
+    radial-gradient(at 75% 85%, rgba(56, 189, 248, 0.20) 0px, transparent 45%),
+    radial-gradient(at 20% 92%, rgba(124, 58, 237, 0.16) 0px, transparent 42%);
+  background-attachment: fixed;
+}
+
+/* ---------------------------------------------------------------------------
+   Efekt "szkła" (glassmorphism). To pomocnicza klasa, którą nakładamy na
+   karty: półprzezroczyste białe tło + rozmycie tego, co jest pod spodem.
+   --------------------------------------------------------------------------- */
+.glass {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+/* Delikatny, własny pasek przewijania — drobny detal, ale podnosi jakość. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.35);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(124, 58, 237, 0.55); background-clip: content-box; }
