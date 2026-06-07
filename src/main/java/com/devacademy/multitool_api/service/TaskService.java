@@ -1,6 +1,8 @@
 package com.devacademy.multitool_api.service;
 
 import com.devacademy.multitool_api.dto.TaskCreateRequest;
+import com.devacademy.multitool_api.dto.TaskResponse;
+import com.devacademy.multitool_api.dto.TaskUpdateRequest;
 import com.devacademy.multitool_api.exception.ResourceNotFoundException;
 import com.devacademy.multitool_api.model.Task;
 import com.devacademy.multitool_api.repository.TaskRepository;
@@ -16,8 +18,7 @@ public class TaskService {
 
     private final TaskRepository taskRepository;
 
-    public Task createTask(TaskCreateRequest request) {
-        // Mapowanie DTO -> Entity przy uzyciu wzorca Builder (dzieki @Builder w klasie Task)
+    public TaskResponse createTask(TaskCreateRequest request) {
         Task task = Task.builder()
                 .title(request.getTitle())
                 .description(request.getDescription())
@@ -25,15 +26,34 @@ public class TaskService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        return taskRepository.save(task);
+        return toResponse(taskRepository.save(task));
     }
 
-    public List<Task> findAllTasks() {
-        return taskRepository.findAll();
+    public TaskResponse updateTask(Long id, TaskUpdateRequest request) {
+        // 1. Znajdź task — jeśli nie istnieje, GlobalExceptionHandler zwróci 404 automatycznie
+        Task task = taskRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Task with id " + id + " not found"));
+
+        // 2. Zaktualizuj pola encji
+        task.setTitle(request.getTitle());
+        task.setDescription(request.getDescription());
+        task.setStatus(request.getStatus());
+
+        // 3. Zapisz i zwróć jako DTO (nie jako encję!)
+        Task saved = taskRepository.save(task);
+        return toResponse(saved);
     }
 
-    public Task findTaskById(Long id) {
+    public List<TaskResponse> findAllTasks() {
+        return taskRepository.findAll()
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    public TaskResponse findTaskById(Long id) {
         return taskRepository.findById(id)
+                .map(this::toResponse)
                 .orElseThrow(() -> new ResourceNotFoundException("Task with id " + id + " not found"));
     }
 
@@ -42,5 +62,15 @@ public class TaskService {
                 .orElseThrow(() -> new ResourceNotFoundException("Task with id " + id + " not found"));
 
         taskRepository.delete(task);
+    }
+
+    private TaskResponse toResponse(Task task) {
+        return TaskResponse.builder()
+                .id(task.getId())
+                .title(task.getTitle())
+                .description(task.getDescription())
+                .status(task.getStatus())
+                .createdAt(task.getCreatedAt())
+                .build();
     }
 }
